@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI菜谱助手</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,"PingFang SC",sans-serif}
+body{padding:16px;background:#f5f6f4;color:#1f2937;max-width:680px;margin:0 auto}
+.box{background:#fff;border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+h3{font-size:17px;margin-bottom:6px}
+.sub{font-size:13px;color:#6b7280;margin-bottom:8px}
+textarea,input{width:100%;padding:11px;border:1px solid #d1d5db;border-radius:9px;margin:8px 0;font-size:16px}
+button{background:#16a34a;color:#fff;border:none;padding:11px 18px;border-radius:9px;cursor:pointer;font-size:15px}
+button.secondary{background:#e5e7eb;color:#374151}
+#result{white-space:pre-line;padding:12px;background:#f0fdf4;border-radius:9px;min-height:120px;font-size:15px;line-height:1.7}
+.recipe-item{padding:12px;border-bottom:1px solid #eee}
+.recipe-item:last-child{border-bottom:none}
+.recipe-item b{font-size:15px}
+.recipe-item p{font-size:14px;color:#4b5563;margin:4px 0}
+.tag{display:inline-block;background:#fef3c7;color:#92400e;font-size:12px;border-radius:6px;padding:2px 8px;margin-left:6px}
+</style>
+</head>
+<body>
+
+<div class="box">
+  <h3>AI 生成菜谱</h3>
+  <div class="sub">输入你手头有的食材，AI 帮你配一道家常菜</div>
+  <textarea id="ing" rows="2" placeholder="例如：番茄、鸡蛋、葱"></textarea>
+  <button onclick="gen()">生成菜谱</button>
+  <div id="result" style="margin-top:10px"></div>
+</div>
+
+<div class="box">
+  <h3>我的菜谱库</h3>
+  <div class="sub">保存在本手机/浏览器里，清缓存会丢失</div>
+  <input id="r-title" placeholder="菜名">
+  <input id="r-tag" placeholder="标签，如：家常菜 / 减脂 / 面食（可选）">
+  <textarea id="r-mat" rows="2" placeholder="食材"></textarea>
+  <textarea id="r-step" rows="3" placeholder="步骤"></textarea>
+  <button class="secondary" onclick="saveRecipe()">保存到菜谱库</button>
+  <div id="list" style="margin-top:10px"></div>
+</div>
+
+<script>
+const storageKey = "my_recipe_list";
+let recipeList = JSON.parse(localStorage.getItem(storageKey) || "[]");
+
+function render(){
+  const wrap = document.getElementById("list");
+  if(recipeList.length === 0){ wrap.innerHTML = '<div class="sub">还没有保存的菜谱</div>'; return; }
+  wrap.innerHTML = recipeList.map((v,i)=>`
+    <div class="recipe-item">
+      <b>${escape(v.title)}</b>${v.tag?`<span class="tag">${escape(v.tag)}</span>`:""}
+      <p>食材：${escape(v.mat)}</p>
+      <p>步骤：${escape(v.step)}</p>
+      <button class="secondary" style="padding:6px 12px;font-size:13px" onclick="del(${i})">删除</button>
+    </div>`).join("");
+}
+function escape(s){ return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function saveRecipe(){
+  const title = document.getElementById("r-title").value.trim();
+  const tag = document.getElementById("r-tag").value.trim();
+  const mat = document.getElementById("r-mat").value.trim();
+  const step = document.getElementById("r-step").value.trim();
+  if(!title) return alert("菜名不能为空");
+  recipeList.push({title,tag,mat,step});
+  localStorage.setItem(storageKey, JSON.stringify(recipeList));
+  render(); alert("已保存");
+}
+function del(i){
+  recipeList.splice(i,1);
+  localStorage.setItem(storageKey, JSON.stringify(recipeList));
+  render();
+}
+render();
+
+async function gen(){
+  const ing = document.getElementById("ing").value.trim();
+  const resDom = document.getElementById("result");
+  if(!ing) return alert("先填写食材");
+  resDom.innerText = "生成中…";
+  try{
+    const resp = await fetch("/api/recipe", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ ing })
+    });
+    if(!resp.ok){ resDom.innerText = "出错了，状态码 " + resp.status; return; }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    resDom.innerText = "";
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      const chunk = decoder.decode(value, {stream:true});
+      for(const line of chunk.split("\n")){
+        if(line.startsWith("data: ")){
+          const d = line.replace("data: ","").trim();
+          if(d === "[DONE]" || !d) continue;
+          try{
+            const j = JSON.parse(d);
+            const txt = j.choices?.[0]?.delta?.content;
+            if(txt) resDom.innerText += txt;
+          }catch(e){}
+        }
+      }
+    }
+    if(!resDom.innerText) resDom.innerText = "（没有返回内容）";
+  }catch(e){
+    resDom.innerText = "网络出错：" + e.message;
+  }
+}
+</script>
+</body>
+</html>
